@@ -2,8 +2,8 @@ import os, json, time, re
 import requests
 from bs4 import BeautifulSoup
 
-TOKEN = os.environ["TELEGRAM_TOKEN"].strip(()
-CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]strip()
+TOKEN = os.environ["TELEGRAM_TOKEN"].strip()
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
 SEEN_FILE = "seen.json"
 
 KEYWORDS = [
