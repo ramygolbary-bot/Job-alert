@@ -18,21 +18,25 @@ KEYWORDS = [
 ]
 
 LOCATIONS = ["Kiryat Gat, Israel", "Rehovot, Israel", "Holon, Israel"]
-DISTANCE_KM = 25
 
 EXCLUDE = ["בניין", "נדל\"ן", "קבלן", "אתר בנייה", "construction", "real estate"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Accept-Language": "he,en;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,he;q=0.8",
 }
+
+URLS = [
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobs/search",
+    "https://www.linkedin.com/jobs/search",
+]
 
 
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE, encoding="utf-8") as f:
             return json.load(f)
-    return None
+    return {}
 
 
 def save_seen(seen):
@@ -49,27 +53,16 @@ def tg(text):
     r.raise_for_status()
 
 
-def linkedin(keyword, location):
-    url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobs/search"
-    params = {
-        "keywords": keyword,
-        "location": location,
-        "distance": int(DISTANCE_KM * 0.62),
-        "f_TPR": "r86400",
-        "start": 0,
-    }
-    r = requests.get(url, params=params, headers=HEADERS, timeout=30)
-    if r.status_code != 200:
-        raise RuntimeError(f"LinkedIn {r.status_code}")
-    soup = BeautifulSoup(r.text, "html.parser")
+def parse(html):
+    soup = BeautifulSoup(html, "html.parser")
     jobs = []
-    for li in soup.find_all("li"):
-        a = li.find("a", class_="base-card__full-link")
-        t = li.find("h3", class_="base-search-card__title")
+    for card in soup.find_all(["li", "div"]):
+        a = card.find("a", class_="base-card__full-link")
+        t = card.find("h3", class_="base-search-card__title")
         if not a or not t:
             continue
-        c = li.find("h4", class_="base-search-card__subtitle")
-        loc = li.find("span", class_="job-search-card__location")
+        c = card.find("h4", class_="base-search-card__subtitle")
+        loc = card.find("span", class_="job-search-card__location")
         clean = a["href"].split("?")[0]
         m = re.search(r"(\d{6,})", clean)
         jid = "li-" + (m.group(1) if m else clean)
@@ -83,10 +76,20 @@ def linkedin(keyword, location):
     return jobs
 
 
+def linkedin(keyword, location):
+    params = {"keywords": keyword, "location": location, "f_TPR": "r86400", "start": 0}
+    statuses = []
+    for url in URLS:
+        r = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        statuses.append(f"{r.status_code}")
+        if r.status_code == 200:
+            return parse(r.text)
+    raise RuntimeError("LinkedIn status " + "/".join(statuses))
+
+
 def main():
     seen = load_seen()
-    first_run = seen is None
-    seen = seen or {}
+    first_run = not any(not k.startswith("_") for k in seen)
     found, errors = {}, []
     for kw in KEYWORDS:
         for loc in LOCATIONS:
@@ -96,6 +99,15 @@ def main():
             except Exception as e:
                 errors.append(str(e))
             time.sleep(2)
+
+    total = len(KEYWORDS) * len(LOCATIONS)
+    if errors and len(errors) >= total and not found:
+        if time.time() - seen.get("_last_err", 0) > 6 * 3600:
+            tg("⚠️ הסריקה נכשלה בכל הבקשות. " + errors[0])
+            seen["_last_err"] = int(time.time())
+            save_seen(seen)
+        print("all failed:", errors[0])
+        return
 
     new = [
         j for jid, j in found.items()
@@ -111,9 +123,6 @@ def main():
     else:
         for j in new:
             tg(f"🆕 {j['title']}\n🏢 {j['company']}\n📍 {j['location']}\n🔗 {j['url']}")
-
-    if errors and len(errors) >= len(KEYWORDS) * len(LOCATIONS):
-        tg("⚠️ הסריקה נכשלה: " + errors[0])
 
     save_seen(seen)
     print(f"found={len(found)} new={len(new)} errors={len(errors)}")
