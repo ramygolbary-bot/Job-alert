@@ -24,15 +24,40 @@ KEYWORDS = [
 LOCATIONS = [
     "Kiryat Gat, Israel", "Ashdod, Israel", "Yavne, Israel",
     "Gedera, Israel", "Rehovot, Israel", "Ness Ziona, Israel",
-    "Rishon LeZion, Israel", "Lod, Israel", "Modiin, Israel",
-    "Shoham, Israel", "Bat Yam, Israel", "Holon, Israel",
+    "Rishon LeZion, Israel", "Lod, Israel", "Ramla, Israel",
+    "Modiin, Israel", "Shoham, Israel", "Bat Yam, Israel",
+    "Holon, Israel", "Beit Shemesh, Israel",
 ]
 
-EXCLUDE = ["בניין", "נדל\"ן", "קבלן", "אתר בנייה", "construction", "real estate"]
+ALLOWED_LOCATIONS = [
+    "kiryat gat", "קריית גת", "קרית גת",
+    "ashdod", "אשדוד",
+    "yavne", "יבנה", "gan yavne", "גן יבנה",
+    "gedera", "גדרה",
+    "rehovot", "רחובות",
+    "ness ziona", "נס ציונה",
+    "rishon", "ראשון",
+    "lod", "לוד",
+    "ramla", "רמלה",
+    "modiin", "מודיעין",
+    "shoham", "שוהם",
+    "bat yam", "בת ים",
+    "holon", "חולון",
+    "beer yaakov", "באר יעקב",
+    "mazkeret batya", "מזכרת בתיה",
+    "kiryat malakhi", "kiryat malachi", "קריית מלאכי",
+    "beit shemesh", "בית שמש",
+    "ekron", "עקרון",
+    "kfar chabad", "כפר חב\"ד",
+    "tzrifin", "צריפין",
+    "beer tuvia", "באר טוביה",
+    "shfela", "שפלה",
+]
 
-EXCLUDE_LOCATION = [
-    "tel aviv", "תל אביב", "ramat gan", "רמת גן",
-    "givatayim", "גבעתיים", "bnei brak", "בני ברק",
+EXCLUDE = [
+    "בניין", "נדל\"ן", "קבלן", "אתר בנייה",
+    "construction", "real estate",
+    "קניין", "קונה", "buyer",
 ]
 
 HEADERS = {
@@ -102,8 +127,8 @@ def linkedin(keyword, location):
 
 
 def blocked_location(job):
-    loc = job["location"].lower()
-    return any(x in loc for x in EXCLUDE_LOCATION)
+    loc = job["location"].lower().replace("'", "").replace("’", "")
+    return not any(x in loc for x in ALLOWED_LOCATIONS)
 
 
 def main():
