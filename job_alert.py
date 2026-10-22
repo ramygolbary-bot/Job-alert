@@ -1,4 +1,5 @@
 import os, json, time, re
+from urllib.parse import quote, urljoin
 import requests
 from bs4 import BeautifulSoup
 
@@ -19,6 +20,47 @@ KEYWORDS = [
     "Head of PMO",
     "Operations Manager",
     "NPI Manager",
+]
+
+SITE_KEYWORDS = [
+    "מנהל פרויקט בכיר",
+    "מנהל תוכניות",
+    "ראש צוות ניהול פרויקטים",
+    "מצוינות תפעולית",
+    "PMO",
+    "מנהל תפעול",
+    "NPI",
+    "Program Manager",
+]
+
+SOURCES = [
+    {
+        "name": "Drushim",
+        "url": "https://www.drushim.co.il/jobs/search/{kw}/",
+        "re": r"/job/(\d+)/",
+    },
+    {
+        "name": "AllJobs",
+        "url": "https://www.alljobs.co.il/SearchResultsGuest.aspx?page=1&position=&type=&freetxt={kw}&city=&region=",
+        "re": r"JobID=(\d+)",
+    },
+    {
+        "name": "JobMaster",
+        "url": "https://www.jobmaster.co.il/jobs/?q={kw}",
+        "re": r"checknum\.asp\?key=(\d+)",
+    },
+    {
+        "name": "JobNet",
+        "url": "https://www.jobnet.co.il/jobs?q={kw}",
+        "re": r"positionid=(\d+)",
+    },
+]
+
+TITLE_WORDS = [
+    "מנהל פרויקט", "מנהלת פרויקט", "מנהל פרוייקט", "מנהל תוכני", "מנהלת תוכני",
+    "ראש צוות", "מצוינות", "pmo", "project manager",
+    "program manager", "operations", "תפעול", "npi",
+    "operational excellence",
 ]
 
 LOCATIONS = [
@@ -84,15 +126,42 @@ def save_seen(seen):
 
 
 def tg(text):
-    r = requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": "true"},
-        timeout=30,
-    )
-    r.raise_for_status()
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": text, "disable_web_page_preview": "true"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        time.sleep(0.5)
+        return True
+    except Exception as e:
+        print("telegram failed:", e)
+        return False
 
 
-def parse(html):
+def norm(text):
+    return text.lower().replace("'", "").replace("’", "")
+
+
+def blocked_location(job):
+    loc = norm(job["location"])
+    return not any(x in loc for x in ALLOWED_LOCATIONS)
+
+
+def excluded(job):
+    text = (job["title"] + " " + job["company"]).lower()
+    return any(x.lower() in text for x in EXCLUDE)
+
+
+def send_job(j, source):
+    company = f"\n🏢 {j['company']}" if j["company"] else ""
+    tg(f"🆕 {j['title']}{company}\n📍 {j['location']}\n🔎 {source}\n🔗 {j['url']}")
+
+
+# ---------------- LinkedIn ----------------
+
+def parse_linkedin(html):
     soup = BeautifulSoup(html, "html.parser")
     jobs = []
     for card in soup.find_all(["li", "div"]):
@@ -122,18 +191,82 @@ def linkedin(keyword, location):
         r = requests.get(url, params=params, headers=HEADERS, timeout=30)
         statuses.append(f"{r.status_code}")
         if r.status_code == 200:
-            return parse(r.text)
+            return parse_linkedin(r.text)
     raise RuntimeError("LinkedIn status " + "/".join(statuses))
 
 
-def blocked_location(job):
-    loc = job["location"].lower().replace("'", "").replace("’", "")
-    return not any(x in loc for x in ALLOWED_LOCATIONS)
+# ---------------- Israeli job sites ----------------
+
+def scan_source(src):
+    link_re = re.compile(src["re"])
+    name = src["name"]
+
+    def ids_in(el):
+        ids = set()
+        for a in el.find_all("a", href=True):
+            m = link_re.search(a["href"])
+            if m:
+                ids.add(m.group(1))
+        return ids
+
+    jobs, errors = {}, []
+    for kw in SITE_KEYWORDS:
+        url = src["url"].format(kw=quote(kw))
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                raise RuntimeError(f"{name} status {r.status_code}")
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.find_all("a", href=True):
+                m = link_re.search(a["href"])
+                if not m:
+                    continue
+                jid = f"{name}-{m.group(1)}"
+                if jid in jobs:
+                    continue
+                card = a
+                for _ in range(12):
+                    parent = card.parent
+                    if parent is None or len(ids_in(parent)) != 1:
+                        break
+                    card = parent
+                text = card.get_text(" ", strip=True)
+                h = card.find(["h1", "h2", "h3", "h4"])
+                title = h.get_text(" ", strip=True) if h else ""
+                if not title:
+                    texts = [
+                        x.get_text(" ", strip=True)
+                        for x in card.find_all("a", href=True)
+                        if link_re.search(x["href"])
+                    ]
+                    texts = [x for x in texts if x and "הגשת" not in x]
+                    title = max(texts, key=len) if texts else ""
+                if not title:
+                    continue
+                if not any(w in title.lower() for w in TITLE_WORDS):
+                    continue
+                city = next((c for c in ALLOWED_LOCATIONS if c in norm(text)), None)
+                if not city:
+                    continue
+                jobs[jid] = {
+                    "id": jid,
+                    "title": title,
+                    "company": "",
+                    "location": city,
+                    "url": urljoin(url, a["href"]),
+                }
+        except Exception as e:
+            errors.append(str(e))
+        time.sleep(2)
+    return jobs, errors
 
 
 def main():
     seen = load_seen()
     first_run = len(seen) == 0
+    now = int(time.time())
+
+    # ---- LinkedIn ----
     found, errors = {}, []
     for kw in KEYWORDS:
         for loc in LOCATIONS:
@@ -146,31 +279,49 @@ def main():
 
     total = len(KEYWORDS) * len(LOCATIONS)
     if errors and len(errors) >= total and not found:
-        if time.time() - seen.get("_last_err", 0) > 6 * 3600:
-            tg("⚠️ הסריקה נכשלה בכל הבקשות. " + errors[0])
-            seen["_last_err"] = int(time.time())
-            save_seen(seen)
-        print("all failed:", errors[0])
-        return
-
-    new = [
-        j for jid, j in found.items()
-        if jid not in seen
-        and not blocked_location(j)
-        and not any(x.lower() in (j["title"] + j["company"]).lower() for x in EXCLUDE)
-    ]
-
-    for jid in found:
-        seen[jid] = int(time.time())
-
-    if first_run:
-        tg(f"✅ ההתראות פעילות. נסרקו {len(found)} משרות קיימות. מעכשיו תקבל רק חדשות.")
+        if now - seen.get("_last_err", 0) > 6 * 3600:
+            tg("⚠️ LinkedIn נכשל בכל הבקשות. " + errors[0])
+            seen["_last_err"] = now
+        print("linkedin all failed:", errors[0])
     else:
-        for j in new:
-            tg(f"🆕 {j['title']}\n🏢 {j['company']}\n📍 {j['location']}\n🔗 {j['url']}")
+        new = [
+            j for jid, j in found.items()
+            if jid not in seen and not blocked_location(j) and not excluded(j)
+        ]
+        for jid in found:
+            seen[jid] = now
+        if first_run:
+            tg(f"✅ LinkedIn פעיל. נסרקו {len(found)} משרות קיימות. מעכשיו תקבל רק חדשות.")
+        else:
+            for j in new:
+                send_job(j, "LinkedIn")
+        print(f"linkedin found={len(found)} new={len(new)} errors={len(errors)}")
+
+    # ---- Israeli sites ----
+    for src in SOURCES:
+        name = src["name"]
+        jobs, errs = scan_source(src)
+        init_key = "_init_" + name
+        err_key = "_err_" + name
+        if not jobs:
+            if now - seen.get(err_key, 0) > 6 * 3600:
+                reason = errs[0] if errs else "לא נמצאו משרות באזור"
+                tg(f"⚠️ {name}: {reason}")
+                seen[err_key] = now
+            print(name, "empty", errs[:1])
+            continue
+        new = [j for jid, j in jobs.items() if jid not in seen and not excluded(j)]
+        for jid in jobs:
+            seen[jid] = now
+        if init_key not in seen:
+            seen[init_key] = now
+            tg(f"✅ {name} פעיל. נסרקו {len(jobs)} משרות באזור. מעכשיו תקבל רק חדשות.")
+        else:
+            for j in new:
+                send_job(j, name)
+        print(f"{name} found={len(jobs)} new={len(new)} errors={len(errs)}")
 
     save_seen(seen)
-    print(f"found={len(found)} new={len(new)} errors={len(errors)}")
 
 
 if __name__ == "__main__":
