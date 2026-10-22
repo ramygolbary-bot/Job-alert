@@ -108,4 +108,4 @@ def blocked_location(job):
 
 def main():
     seen = load_seen()
-    first_run = not any(not k.startswith("_") for
+   first_run = len(seen) == 0
