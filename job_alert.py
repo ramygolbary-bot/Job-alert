@@ -108,4 +108,45 @@ def blocked_location(job):
 
 def main():
     seen = load_seen()
-   first_run = len(seen) == 0
+    first_run = len(seen) == 0
+    found, errors = {}, []
+    for kw in KEYWORDS:
+        for loc in LOCATIONS:
+            try:
+                for j in linkedin(kw, loc):
+                    found[j["id"]] = j
+            except Exception as e:
+                errors.append(str(e))
+            time.sleep(2)
+
+    total = len(KEYWORDS) * len(LOCATIONS)
+    if errors and len(errors) >= total and not found:
+        if time.time() - seen.get("_last_err", 0) > 6 * 3600:
+            tg("⚠️ הסריקה נכשלה בכל הבקשות. " + errors[0])
+            seen["_last_err"] = int(time.time())
+            save_seen(seen)
+        print("all failed:", errors[0])
+        return
+
+    new = [
+        j for jid, j in found.items()
+        if jid not in seen
+        and not blocked_location(j)
+        and not any(x.lower() in (j["title"] + j["company"]).lower() for x in EXCLUDE)
+    ]
+
+    for jid in found:
+        seen[jid] = int(time.time())
+
+    if first_run:
+        tg(f"✅ ההתראות פעילות. נסרקו {len(found)} משרות קיימות. מעכשיו תקבל רק חדשות.")
+    else:
+        for j in new:
+            tg(f"🆕 {j['title']}\n🏢 {j['company']}\n📍 {j['location']}\n🔗 {j['url']}")
+
+    save_seen(seen)
+    print(f"found={len(found)} new={len(new)} errors={len(errors)}")
+
+
+if __name__ == "__main__":
+    main()
