@@ -33,6 +33,10 @@ ALLOWED_LOCATIONS = [x.lower() for x in [
     "קריית גת", "קרית גת", "אשדוד", "יבנה", "גדרה", "רחובות", "נס ציונה", "ראשון", "לוד", "רמלה", "מודיעין", "שוהם", "בת ים", "חולון", "בית שמש",
     "גן יבנה", "באר יעקב", "מזכרת בתיה", "קריית מלאכי", "קרית מלאכי", "עקרון", "כפר חב", "צריפין", "באר טוביה", "שפלה", "לכיש"]]
 
+# --- חברות ביטחוניות: חיפוש לפי שם החברה ב-LinkedIn ---
+DEFENSE = ["Elbit Systems", "Elbit Elisra", "Israel Aerospace Industries", "ELTA Systems", "IAI Bedek", "SCD Semiconductor Devices", "Israel Weapon Industries", "Aeronautics Ltd", "TAT Technologies", "PMI Electronics"]
+DEFENSE_RE = re.compile(r"elbit|elisra|israel aerospace|\biai\b|\belta\b|bedek|\bscd\b|semiconductor devices|\biwi\b|israel weapon|aeronautics|tat tech|pmi electronics", re.I)
+
 # --- סינון לפי שם התפקיד ---
 TITLE_YES = re.compile(r"project manager|program manager|programme manager|project lead|program lead|\bpmo\b|head of project|head of program|operations manager|operational excellence|\bnpi\b|new product intro|head of operations|director of operations|project management|program management|מנהל(ת)? (פרו?י?יקט|תוכני|תפעול|מצוינות)|ראש צוות (ניהול )?פרו?י?יקט|ניהול פרו?י?יקט|ניהול תוכני|מצוינות תפעולית|ניהול תפעול|מנהל/ת (פרו?י?יקט|תוכני|תפעול)", re.I)
 TITLE_NO = re.compile(r"engineer|developer|mechanic|technician|devops|\bdj\b|sales|account manager|buyer|procurement|purchas|maintenance|recruit|מהנדס|טכנאי|מפתח|אחזקה|תחזוקה|קניין|קונה|רכש|מכירות|גיוס", re.I)
@@ -174,6 +178,14 @@ def main():
                 errs += 1
                 last = str(e)
             time.sleep(2)
+    for comp in DEFENSE:
+        try:
+            for j in linkedin(comp, "Israel"):
+                if DEFENSE_RE.search(j["company"]):
+                    found[j["id"]] = j
+        except Exception:
+            pass
+        time.sleep(2)
     if ok == 0:
         if now - seen.get("_last_err", 0) > 6 * 3600:
             tg("⚠️ LinkedIn: הסריקה נכשלה. " + last)
@@ -217,3 +229,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
