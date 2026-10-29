@@ -15,6 +15,14 @@ SOURCES = [
     {"name": "AllJobs", "url": "https://www.alljobs.co.il/SearchResultsGuest.aspx?page=1&position=&type=&freeText={kw}&city=&region=", "id": r"JobID=(\d+)"},
     {"name": "JobMaster", "url": "https://www.jobmaster.co.il/jobs/?q={kw}", "id": r"checknum\.asp\?key=(\d+)"},
     {"name": "JobNet", "url": "https://www.jobnet.co.il/jobs?q={kw}", "id": r"positionid=(\d+)"},
+    {"name": "Applied Materials", "anchor": True, "id": r"/job/rehovot/[^/]+/95/(\d+)",
+     "urls": ["https://jobs.appliedmaterials.com/employment/rehovot-project-program-management-jobs/95/8338064/294640-294904-293725/4",
+              "https://jobs.appliedmaterials.com/search-jobs/Rehovot"]},
+    {"name": "Stratasys", "anchor": True, "id": r"/job/[^/]*(?:Rehovot|Kiryat)[^/]*/(\d+)",
+     "urls": ["https://careers.stratasys.com/go/Manufacturing-&-Operations/8909100/",
+              "https://careers.stratasys.com/go/Manufacturing-&-Operations/8909100/25/",
+              "https://careers.stratasys.com/go/Corporate-Functions/8909200/",
+              "https://careers.stratasys.com/search/?q=manager&locationsearch=Israel"]},
 ]
 
 LOCATIONS = [c + ", Israel" for c in ["Kiryat Gat", "Ashdod", "Yavne", "Gedera", "Rehovot", "Ness Ziona", "Rishon LeZion", "Lod", "Ramla", "Modiin", "Shoham", "Bat Yam", "Holon", "Beit Shemesh"]]
@@ -106,9 +114,11 @@ def linkedin(keyword, location):
 
 def scan_source(src):
     jobs, errors = {}, []
-    for kw in SITE_KEYWORDS:
+    urls = src.get("urls") or [src["url"].format(kw=requests.utils.quote(kw)) for kw in SITE_KEYWORDS]
+    base = re.match(r"https?://[^/]+", urls[0]).group(0)
+    for url in urls:
         try:
-            r = requests.get(src["url"].format(kw=requests.utils.quote(kw)), headers=UA, timeout=25)
+            r = requests.get(url, headers=UA, timeout=25)
             if r.status_code != 200:
                 errors.append(str(r.status_code))
                 continue
@@ -127,17 +137,20 @@ def scan_source(src):
                     card = card.parent
                     if len(card.get_text(" ", strip=True)) > 80:
                         break
-                h = card.find(["h1", "h2", "h3", "h4"])
-                title = norm(h.get_text()) if h else ""
-                if not title:
-                    cands = [norm(x.get_text()) for x in card.find_all("a", href=True) if re.search(src["id"], x["href"])]
-                    title = max(cands, key=len) if cands else norm(a.get_text())
-                text = norm(card.get_text(" "))
+                if src.get("anchor"):
+                    title = norm(a.get_text())
+                    text = norm(a.get_text(" ")) + " " + a["href"]
+                else:
+                    h = card.find(["h1", "h2", "h3", "h4"])
+                    title = norm(h.get_text()) if h else ""
+                    if not title:
+                        cands = [norm(x.get_text()) for x in card.find_all("a", href=True) if re.search(src["id"], x["href"])]
+                        title = max(cands, key=len) if cands else norm(a.get_text())
+                    text = norm(card.get_text(" "))
                 if not title_ok(title) or not allowed_location(text) or excluded(title):
                     continue
                 href = a["href"]
                 if href.startswith("/"):
-                    base = re.match(r"https?://[^/]+", src["url"]).group(0)
                     href = base + href
                 jobs[jid] = {"id": jid, "title": title[:120], "company": "", "location": "", "url": href, "source": src["name"]}
         except Exception as e:
@@ -179,11 +192,11 @@ def main():
             for k in found:
                 seen[k] = 1
 
-    # אתרים ישראליים
+    # אתרים ישראליים וחברות
     for src in SOURCES:
         name = src["name"]
         jobs, errors = scan_source(src)
-        if not jobs and errors and len(errors) >= len(SITE_KEYWORDS) // 2:
+        if not jobs and errors and len(errors) >= max(1, len(src.get('urls') or SITE_KEYWORDS) // 2):
             if now - seen.get("_err_" + name, 0) > 6 * 3600:
                 tg(f"⚠️ {name}: לא הצלחתי לקרוא ({','.join(errors[:3])})")
                 seen["_err_" + name] = now
